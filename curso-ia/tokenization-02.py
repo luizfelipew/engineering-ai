@@ -28,3 +28,28 @@ preprocessed_docs = [" ".join(preprocess(doc)) for doc in documents]
 preprocessed_docs
 
 vectorizer = TfidfVectorizer()
+tfidf_matrix = vectorizer.fit_transform(preprocessed_docs)
+
+tfidf_matrix
+
+query = "machine learning"
+
+
+def search_tfidf(query, vectorizer, tfidf_matrix):
+    query_vector = vectorizer.transform([query])
+    similarities = cosine_similarity(tfidf_matrix, query_vector).flatten()
+    sorted_similarities = list(enumerate(similarities))
+    # estou pegando e a segunda posição com x[1] que são as similaridades
+    # reverse True serve para reverter com score mais alto de similaridade
+    # no final ordenado
+    results = sorted(sorted_similarities, key=lambda x: x[1], reverse=True)
+
+    return results
+
+
+search_similarities = search_tfidf(query, vectorizer, tfidf_matrix)
+search_similarities
+
+print(f"top 10 documentos por score de similaridade {query}")
+for doc_index, score in search_similarities[:10]:
+    print(f"documento {doc_index}: {documents[doc_index]}")
