@@ -50,3 +50,4 @@ print("Número de tokens:", len(tokens))
 # Exibir a lista de tokens (será mostrada automaticamente no modo interativo)
 tokens
 
+
