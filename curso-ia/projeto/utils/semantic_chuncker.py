@@ -23,16 +23,13 @@ class SemanticChunker:
         self.max_tokens = max_tokens
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-    def create_chunks(self, text_content: str):
-        paragraphs = [
-            p.strip() for p in text_content.split("\n") if len(p.strip().split()) > 0
-        ]
-        if not paragraphs:
-            return []
+    def _cluster_and_process(self, texts, min_size):
+        if len(texts) <= 1:
+            return texts, texts if len(texts) == 1 else []
 
-        embeddings = self.model.encode(paragraphs, show_progress_bar=False)
+        embeddings = self.model.encode(texts, show_progress_bar=False)
         labels = hdbscan.HDBSCAN(
-            min_cluster_size=self.min_cluster_size, metric="euclidean"
+            min_cluster_size=min_size, metric="euclidean"
         ).fit_predict(embeddings)
 
         clusters = defaultdict(list)
@@ -40,11 +37,11 @@ class SemanticChunker:
 
         for i, label in enumerate(labels):
             if label != -1:
-                clusters[label].append(paragraphs[i])
+                clusters[label].append(texts[i])
             else:
-                orphans.append(paragraphs[i])
+                orphans.append(texts[i])
 
-        final_chunks = []
+        chunks = []
         for cluster_paras in clusters.values():
             current_chunk = []
             current_tokens = 0
@@ -52,7 +49,7 @@ class SemanticChunker:
             for para in cluster_paras:
                 para_tokens = len(self.tokenizer.encode(para, add_special_tokens=False))
                 if current_tokens + para_tokens > self.max_tokens and current_chunk:
-                    final_chunks.append("\n\n".join(current_chunk))
+                    chunks.append("\n\n".join(current_chunk))
                     current_chunk = [para]
                     current_tokens = para_tokens
                 else:
@@ -60,44 +57,28 @@ class SemanticChunker:
                     current_tokens += para_tokens
 
             if current_chunk:
-                final_chunks.append("\n\n".join(current_chunk))
+                chunks.append("\n\n".join(current_chunk))
+
+        return chunks, orphans
+
+    def create_chunks(self, text_content: str):
+        paragraphs = [
+            p.strip() for p in text_content.split("\n") if len(p.strip().split()) > 0
+        ]
+        if not paragraphs:
+            return []
+
+        final_chunks, orphans = self._cluster_and_process(
+            paragraphs, self.min_cluster_size
+        )
 
         if len(orphans) > 1:
-            orphan_emb = self.model.encode(orphans, show_progress_bar=False)
-            orphan_labels = hdbscan.HDBSCAN(
-                min_cluster_size=self.orphan_cluster_size, metric="euclidean"
-            ).fit_predict(orphan_emb)
-
-            orphan_clusters = defaultdict(list)
-            single_orphan = []
-
-            for i, lbl in enumerate(orphan_labels):
-                if lbl != -1:
-                    orphan_clusters[lbl].append(orphans[i])
-                else:
-                    single_orphan.append(orphans[i])
-
-            for orphan_paras in orphan_clusters.values():
-                current_chunk = []
-                current_tokens = 0
-
-                for para in orphan_paras:
-                    para_tokens = len(
-                        self.tokenizer.encode(para, add_special_tokens=False)
-                    )
-                    if current_tokens + para_tokens > self.max_tokens and current_chunk:
-                        final_chunks.append("\n\n".join(current_chunk))
-                        current_chunk = [para]
-                        current_tokens = para_tokens
-                    else:
-                        current_chunk.append(para)
-                        current_tokens += para_tokens
-
-                if current_chunk:
-                    final_chunks.append("\n\n".join(current_chunk))
-
+            orphan_chunks, single_orphan = self._cluster_and_process(
+                orphans, self.orphan_cluster_size
+            )
+            final_chunks.extend(orphan_chunks)
             final_chunks.extend(single_orphan)
         elif orphans:
-            final_chunks.append(orphans[0])
+            final_chunks.extend(orphans)
 
         return final_chunks
