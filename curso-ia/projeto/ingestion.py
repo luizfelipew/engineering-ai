@@ -4,6 +4,7 @@ from qdrant_client import QdrantClient, models
 from fastembed import TextEmbedding, SparseTextEmbedding, LateInteractionTextEmbedding
 from dotenv import load_dotenv
 from utils.semantic_chuncker import SemanticChunker
+from utils.edgar_client import EdgarClient
 
 load_dotenv()
 
@@ -11,7 +12,7 @@ DENSE_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 SPARSE_MODEL = "Qdrant/bm25"
 COLBERT_MODEL = "colbert-ir/colbertv2.0"
 COLLECTION_NAME = "financial"
-FILE_PATH = "./AAPL_10-K_1A_temp.md"
+EMAIL = os.getenv("EMAIL_EDGAR")
 MAX_TOKENS = 300
 
 qdrant = QdrantClient(
@@ -38,12 +39,20 @@ qdrant.create_collection(
     sparse_vectors_config={"sparse": models.SparseVectorParams()},
 )
 
-# Read and process file
-with open(FILE_PATH, "r", encoding="utf-8") as f:
-    content = f.read()
+# Fetch data from Edgar (10-K and 10-Q) and build chunks with metadata
+edgar = EdgarClient(email=EMAIL)
+data_10k = edgar.fetch_filing_data(ticker="AAPL", form_type="10-K")
+text_10k = edgar.get_combine_text(data_10k)
+
+data_10q = edgar.fetch_filing_data(ticker="AAPL", form_type="10-Q")
+text_10q = edgar.get_combine_text(data_10q)
 
 chunker = SemanticChunker(max_tokens=MAX_TOKENS)
-chunks = chunker.create_chunks(content)
+all_chunks = []
+for data, text in [(data_10k, text_10k), (data_10q, text_10q)]:
+    chunks = chunker.create_chunks(text)
+    for chunk in chunks:
+        all_chunks.append({"text": chunk, "metadata": data["metadata"]})
 
 # Generate embeddings and upload to Qdrant
 dense_model = TextEmbedding(DENSE_MODEL)
@@ -51,10 +60,12 @@ sparse_model = SparseTextEmbedding(SPARSE_MODEL)
 colbert_model = LateInteractionTextEmbedding(COLBERT_MODEL)
 
 points = []
-for chunk in chunks:
+for chunk_data in all_chunks:
+    chunk = chunk_data["text"]
+    metadata = chunk_data["metadata"]
+
     dense_embedding = list(dense_model.passage_embed([chunk]))[0].tolist()
     sparse_embedding = list(sparse_model.passage_embed([chunk]))[0].as_object()
-    # ColBERT retorna múltiplos vetores (multivector) - precisa ser uma lista de listas
     colbert_vectors = list(colbert_model.passage_embed([chunk]))[0]
     colbert_embedding = [vec.tolist() for vec in colbert_vectors]
 
@@ -65,39 +76,8 @@ for chunk in chunks:
             "sparse": sparse_embedding,
             "colbert": colbert_embedding,
         },
-        payload={"text": chunk, "source": FILE_PATH},
+        payload={"text": chunk, "metadata": metadata},
     )
     points.append(point)
 
-qdrant.upload_points(collection_name=COLLECTION_NAME, points=points)
-
-# Example query
-query_text = "What are the main financial risks?"
-query_dense = list(dense_model.query_embed([query_text]))[0].tolist()
-query_sparse = list(sparse_model.query_embed([query_text]))[0].as_object()
-query_colbert = list(colbert_model.query_embed([query_text]))[0].tolist()
-
-results = qdrant.query_points(
-    collection_name=COLLECTION_NAME,
-    prefetch=[
-        {
-            "prefetch": [
-                {"query": query_dense, "using": "dense", "limit": 10},
-                {"query": query_sparse, "using": "sparse", "limit": 10},
-            ],
-            "query": models.FusionQuery(fusion=models.Fusion.RRF),
-            "limit": 20,
-        }
-    ],
-    query=query_colbert,
-    using="colbert",
-    limit=3,
-)
-
-# Print results with normalized scores
-max_score = max(result.score for result in results.points)
-for r in results.points:
-    normalized_score = r.score / max_score
-    print(f"Score: {normalized_score}")
-    print(f"Texto: {r.payload['text'][:100]}...")
-    print("-" * 80)
+qdrant.upload_points(collection_name=COLLECTION_NAME, points=points, batch_size=5)
