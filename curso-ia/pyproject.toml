@@ -8,6 +8,7 @@ dependencies = [
     "docling>=2.61.2",
     "dotenv>=0.9.9",
     "edgartools>=5.20.1",
+    "fastapi>=0.135.3",
     "groq>=0.33.0",
     "hdbscan>=0.8.41",
     "langextract>=1.1.0",
@@ -20,6 +21,7 @@ dependencies = [
     "rank-bm25>=0.2.2",
     "scikit-learn>=1.7.2",
     "sentence-transformers>=5.1.2",
+    "uvicorn>=0.42.0",
     "whoosh>=2.7.4",
 ]
 
