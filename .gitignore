@@ -1,3 +1,4 @@
 curso-ia/.env
 curso-ia/projeto/utils/__pycache__
 curso-ia/projeto/app/__pycache__
+.DS_Store
